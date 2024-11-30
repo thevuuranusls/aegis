@@ -15,7 +15,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}  # This checks out the PR's source branch
       - run: |  
-          echo "Running on branch: ${{ github.event.pull_request.head.ref }} with commit ${{ github.sha }}"
+          echo "Running on branch: ${{ github.event.pull_request.head.ref }} with commit ${{ github.event.pull_request.head.sha }}"
           echo "The repository ${{ github.repository }} contains the following files"
           tree
       - name: Build
@@ -32,7 +32,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }} # This checks out the PR's base branch
       - run: |  
-          echo "Running on branch: ${{ github.event.pull_request.base.ref }} with commit ${{ github.sha }}"
+          echo "Running on branch: ${{ github.event.pull_request.base.ref }} with commit ${{ github.event.pull_request.base.sha }}"
           echo "The repository ${{ github.repository }} contains the following files"
           tree
       - name: Build
