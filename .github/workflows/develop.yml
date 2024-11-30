@@ -2,7 +2,11 @@ name: 1st workflows
 on:
   push:
     branches: 
+      - develop
       - feature/support_openai
+  pull_request:
+    branches:
+      - develop
   workflow_dispatch:
 jobs:
   FirstJob:
@@ -14,4 +18,7 @@ jobs:
       - run: |  
           echo "The repository ${{ github.repository }} contains the following files"
           tree
-      
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo test
