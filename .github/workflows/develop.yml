@@ -1,0 +1,17 @@
+name: 1st workflows
+on:
+  push:
+    branches: 
+      - feature/support_openai
+  workflow_dispatch:
+jobs:
+  FirstJob:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hello Aegis"
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+      - run: |  
+          echo "The repository ${{ github.repository }} contains the following files"
+          tree
+      
