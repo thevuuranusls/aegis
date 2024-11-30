@@ -1,4 +1,4 @@
-name: 1st workflows
+name: Develop workflows
 on:
   push:
     branches: 
@@ -9,7 +9,7 @@ on:
       - develop
   workflow_dispatch:
 jobs:
-  FirstJob:
+  BuildRust:
     runs-on: ubuntu-latest
     steps:
       - run: echo "Hello Aegis"
