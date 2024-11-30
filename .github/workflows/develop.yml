@@ -1,9 +1,8 @@
 name: Develop workflows
 on:
   push:
-    branches: 
+    branches:
       - develop
-      - feature/support_openai
   pull_request:
     branches:
       - develop
