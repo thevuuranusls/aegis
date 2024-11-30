@@ -30,12 +30,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4.2.2
         with:
-          ref: ${{ github.event.pull_request.base.sha }} # This checks out the PR's base branch
+          ref: ${{ github.event.pull_request.base.ref }} # This checks out the PR's target branch
+      - name: Fetch latest
+        run: git fetch origin ${{ github.event.pull_request.base.ref }}
       - run: |  
-          echo "Running on branch: ${{ github.event.pull_request.base.ref }} with commit ${{ github.event.pull_request.base.sha }}"
+          echo "Building on ${{ github.event.pull_request.base.ref }} branch after merge"
+          echo "Latest commit on ${{ github.event.pull_request.base.ref }}: $(git rev-parse HEAD)"
           echo "The repository ${{ github.repository }} contains the following files"
           tree
       - name: Build
-        run: cargo build
+        run: |
+          cargo clean
+          cargo build --release --target x86_64-unknown-linux-gnu
       - name: Run tests
-        run: cargo test
+        run: cargo test --release --target x86_64-unknown-linux-gnu
