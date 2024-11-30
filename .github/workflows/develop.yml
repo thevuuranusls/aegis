@@ -1,20 +1,37 @@
 name: Develop workflows
 on:
-  push:
-    branches:
-      - develop
   pull_request:
+    types: [opened, synchronize, closed]
     branches:
       - develop
   workflow_dispatch:
 jobs:
-  BuildRust:
+  PreMerge:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Hello Aegis"
+      - run: echo "Building PreMerge ${{ github.repository }}"
       - name: Checkout
         uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # This checks out the PR's source branch
       - run: |  
+          echo "Running on branch: ${{ github.ref_name }} with commit ${{ github.sha }}"
+          echo "The repository ${{ github.repository }} contains the following files"
+          tree
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo test
+  PostMerge:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Building PostMerge ${{ github.repository }}"
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }} # This checks out the PR's base branch
+      - run: |  
+          echo "Running on branch: ${{ github.ref_name }} with commit ${{ github.sha }}"
           echo "The repository ${{ github.repository }} contains the following files"
           tree
       - name: Build
