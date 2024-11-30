@@ -107,4 +107,3 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 - Built with Rust 🦀
 - Powered by Anthropic's Claude and OpenAI's GPT models
-```

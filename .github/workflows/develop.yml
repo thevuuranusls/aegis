@@ -1,17 +1,41 @@
-name: 1st workflows
+name: Develop workflows
 on:
-  push:
-    branches: 
-      - feature/support_openai
+  pull_request:
+    types: [opened, synchronize, closed]
+    branches:
+      - develop
   workflow_dispatch:
 jobs:
-  FirstJob:
+  PreMerge:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Hello Aegis"
+      - run: echo "Building PreMerge ${{ github.repository }}"
       - name: Checkout
         uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # This checks out the PR's source branch
       - run: |  
+          echo "Running on branch: ${{ github.event.pull_request.head.ref }} with commit ${{ github.event.pull_request.head.sha }}"
           echo "The repository ${{ github.repository }} contains the following files"
           tree
-      
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo test
+  PostMerge:
+    runs-on: ubuntu-latest
+    if: github.event.pull_request.merged == true # Only run if the PR is merged
+    steps:
+      - run: echo "Building PostMerge ${{ github.repository }}"
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ github.event.pull_request.base.sha }} # This checks out the PR's base branch
+      - run: |  
+          echo "Running on branch: ${{ github.event.pull_request.base.ref }} with commit ${{ github.event.pull_request.base.sha }}"
+          echo "The repository ${{ github.repository }} contains the following files"
+          tree
+      - name: Build
+        run: cargo build
+      - name: Run tests
+        run: cargo test

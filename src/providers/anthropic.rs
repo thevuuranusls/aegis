@@ -42,8 +42,6 @@ struct AnthropicError {
 struct AnthropicResponse {
     content: Vec<AnthropicContent>,
     id: String,
-    model: String,
-    role: String,
 }
 
 #[derive(Deserialize, Debug)]
