@@ -14,10 +14,20 @@ use crate::{
 pub trait Provider: Send + Sync {
     fn provider_type(&self) -> ProviderType;
 
-    async fn send_message(&self, messages: Vec<Message>) -> Result<String, AegisError>;
+    async fn send_message(&self, messages: Vec<Message>) -> Result<Message, AegisError>;
 
-    async fn send_message_streaming(
+    async fn stream_message(
         &self,
         messages: Vec<Message>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AegisError>> + Send>>, AegisError>;
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Message, AegisError>> + Send>>, AegisError>;
+
+    fn capabilities(&self) -> ProviderCapabilities;
+}
+
+#[derive(Debug, Clone)]
+pub struct ProviderCapabilities {
+    pub streaming: bool,
+    pub max_tokens: usize,
+    pub supported_content_types: Vec<String>,
+    pub models: Vec<String>,
 }

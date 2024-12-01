@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use futures::Stream;
+use futures::{Stream, StreamExt};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::pin::Pin;
@@ -7,10 +7,9 @@ use tracing::{debug, error};
 
 use crate::{
     error::AegisError,
-    models::{Message, ProviderType},
+    models::{Content, ContentPart, Message, Metadata, Role, Usage},
+    providers::{Provider, ProviderCapabilities},
 };
-
-use super::Provider;
 
 pub struct AnthropicProvider {
     client: Client,
@@ -20,9 +19,35 @@ pub struct AnthropicProvider {
 #[derive(Serialize, Debug)]
 struct AnthropicRequest {
     model: String,
-    messages: Vec<Message>,
+    messages: Vec<AnthropicMessage>,
     max_tokens: u32,
     stream: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct AnthropicMessage {
+    role: String,
+    content: Vec<AnthropicContent>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct AnthropicContent {
+    #[serde(rename = "type")]
+    content_type: String,
+    text: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
+    id: String,
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Deserialize, Debug)]
+struct AnthropicUsage {
+    input_tokens: u32,
+    output_tokens: u32,
 }
 
 #[derive(Deserialize, Debug)]
@@ -38,18 +63,6 @@ struct AnthropicError {
     r#type: String,
 }
 
-#[derive(Deserialize, Debug)]
-struct AnthropicResponse {
-    content: Vec<AnthropicContent>,
-    id: String,
-}
-
-#[derive(Deserialize, Debug)]
-struct AnthropicContent {
-    text: String,
-    r#type: String,
-}
-
 impl AnthropicProvider {
     pub fn new(api_key: String) -> Self {
         Self {
@@ -57,26 +70,82 @@ impl AnthropicProvider {
             api_key,
         }
     }
+
+    fn convert_to_anthropic_messages(&self, messages: Vec<Message>) -> Vec<AnthropicMessage> {
+        messages.into_iter()
+            .map(|msg| AnthropicMessage {
+                role: match msg.role {
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                    Role::System => "system",
+                }.to_string(),
+                content: msg.content.parts.into_iter()
+                    .map(|part| match part {
+                        ContentPart::Text { text } => AnthropicContent {
+                            content_type: "text".to_string(),
+                            text: Some(text),
+                        },
+                        ContentPart::Image { image_url: _ } => AnthropicContent {
+                            content_type: "image".to_string(),
+                            text: None,
+                        },
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+
+    fn convert_from_anthropic_response(
+        &self,
+        content: Vec<AnthropicContent>,
+        usage: Option<AnthropicUsage>,
+    ) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: Content {
+                parts: content
+                    .into_iter()
+                    .filter_map(|c| {
+                        if c.content_type == "text" {
+                            c.text.map(|text| ContentPart::Text { text })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect(),
+            },
+            metadata: Some(Metadata {
+                model: Some("claude-3-sonnet-20240229".to_string()),
+                provider: Some("anthropic".to_string()),
+                usage: usage.map(|u| Usage {
+                    prompt_tokens: u.input_tokens,
+                    completion_tokens: u.output_tokens,
+                    total_tokens: u.input_tokens + u.output_tokens,
+                }),
+            }),
+        }
+    }
 }
 
 #[async_trait]
 impl Provider for AnthropicProvider {
-    fn provider_type(&self) -> ProviderType {
-        ProviderType::Anthropic
+    fn provider_type(&self) -> crate::models::ProviderType {
+        crate::models::ProviderType::Anthropic
     }
 
-    async fn send_message(&self, messages: Vec<Message>) -> Result<String, AegisError> {
+    async fn send_message(&self, messages: Vec<Message>) -> Result<Message, AegisError> {
+        let anthropic_messages = self.convert_to_anthropic_messages(messages);
+        
         let request = AnthropicRequest {
             model: "claude-3-sonnet-20240229".to_string(),
-            messages,
+            messages: anthropic_messages,
             max_tokens: 4096,
             stream: false,
         };
 
         debug!("Sending request to Anthropic: {:?}", request);
 
-        let response = self
-            .client
+        let response = self.client
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
@@ -88,7 +157,6 @@ impl Provider for AnthropicProvider {
                 AegisError::NetworkError(e)
             })?;
 
-        // Capture both status and body text before consuming the response
         let status = response.status();
         let body = response.text().await.map_err(|e| {
             error!("Failed to get response body: {:?}", e);
@@ -99,23 +167,17 @@ impl Provider for AnthropicProvider {
 
         match status {
             reqwest::StatusCode::OK => {
-                // Try to parse the successful response
                 match serde_json::from_str::<AnthropicResponse>(&body) {
                     Ok(response) => {
-                        let content = response
-                            .content
-                            .into_iter()
-                            .filter(|c| c.r#type == "text")
-                            .map(|c| c.text)
-                            .collect::<Vec<_>>()
-                            .join("");
-
                         debug!("Successfully parsed response with ID: {}", response.id);
-                        Ok(content)
+                        Ok(self.convert_from_anthropic_response(
+                            response.content,
+                            response.usage,
+                        ))
                     }
                     Err(e) => {
                         error!("Failed to parse successful response: {:?}", e);
-                        Ok(body) // Fallback to raw text if parsing fails
+                        Err(AegisError::APIError(e.to_string()))
                     }
                 }
             }
@@ -128,7 +190,6 @@ impl Provider for AnthropicProvider {
                 Err(AegisError::InvalidAPIKey)
             }
             _ => {
-                // Try to parse the error response
                 match serde_json::from_str::<AnthropicErrorResponse>(&body) {
                     Ok(error_response) => {
                         error!(
@@ -141,7 +202,6 @@ impl Provider for AnthropicProvider {
                         )))
                     }
                     Err(_) => {
-                        // Can't parse as JSON, use the raw text
                         error!("Unexpected response: Status {}, Body: {}", status, body);
                         Err(AegisError::APIError(format!(
                             "Status: {}, Body: {}",
@@ -153,11 +213,60 @@ impl Provider for AnthropicProvider {
         }
     }
 
-    // TODO: Implement streaming
-    async fn send_message_streaming(
+    async fn stream_message(
         &self,
-        _messages: Vec<Message>,
-    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AegisError>> + Send>>, AegisError> {
-        todo!("Implement streaming")
+        messages: Vec<Message>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<Message, AegisError>> + Send>>, AegisError> {
+        let anthropic_messages = self.convert_to_anthropic_messages(messages);
+        
+        let request = AnthropicRequest {
+            model: "claude-3-sonnet-20240229".to_string(),
+            messages: anthropic_messages,
+            max_tokens: 4096,
+            stream: true,
+        };
+
+        let response = self.client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Accept", "text/event-stream")
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| AegisError::NetworkError(e))?;
+
+        if !response.status().is_success() {
+            return Err(AegisError::APIError("Stream request failed".to_string()));
+        }
+
+        let stream = response
+            .bytes_stream()
+            .map(move |chunk| {
+                chunk
+                    .map_err(|e| AegisError::NetworkError(e))
+                    .and_then(|bytes| {
+                        // Parse SSE chunk and convert to Message
+                        let text = String::from_utf8_lossy(&bytes);
+                        Ok(Message {
+                            role: Role::Assistant,
+                            content: Content {
+                                parts: vec![ContentPart::Text { text: text.to_string() }],
+                            },
+                            metadata: None,
+                        })
+                    })
+            });
+
+        Ok(Box::pin(stream))
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities {
+            streaming: true,
+            max_tokens: 4096,
+            supported_content_types: vec!["text".to_string(), "image".to_string()],
+            models: vec!["claude-3-sonnet-20240229".to_string()],
+        }
     }
 }
