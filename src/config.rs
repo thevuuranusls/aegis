@@ -1,3 +1,4 @@
+
 #[derive(Debug, Clone)]
 pub struct AegisConfig {
     pub anthropic_api_key: Option<String>,
@@ -13,13 +14,17 @@ impl AegisConfig {
     }
 
     pub fn with_anthropic(mut self, key: String) -> Self {
-        self.anthropic_api_key = Some(key);
+        self.anthropic_api_key = if key.is_empty() { None } else { Some(key) };
         self
     }
 
     pub fn with_openai(mut self, key: String) -> Self {
-        self.openai_api_key = Some(key);
+        self.openai_api_key = if key.is_empty() { None } else { Some(key) };
         self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.anthropic_api_key.is_none() && self.openai_api_key.is_none()
     }
 }
 

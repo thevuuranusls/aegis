@@ -46,8 +46,8 @@ fn load_config() -> Result<AegisConfig> {
     dotenv::dotenv().ok();
 
     let config = AegisConfig::new()
-        .with_anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap_or_default())
-        .with_openai(std::env::var("OPENAI_API_KEY").unwrap_or_default());
+        .with_anthropic(std::env::var("ANTHROPIC_API_KEY").unwrap())
+        .with_openai(std::env::var("OPENAI_API_KEY").unwrap());
 
     Ok(config)
 }
@@ -74,13 +74,6 @@ fn update_env_file(key: &str, value: &str) -> Result<()> {
 
     fs::write(env_path, content)?;
     Ok(())
-}
-
-#[derive(serde::Serialize, serde::Deserialize)]
-struct SavedConversation {
-    provider: String,
-    model: String,
-    messages: Vec<Message>,
 }
 
 #[tokio::main]
@@ -147,6 +140,10 @@ async fn handle_chat(
     model: Option<String>,
 ) -> Result<()> {
     let config = load_config()?;
+    if config.is_empty() {
+        println!("{}", "No configuration found. Please run `aegis config` to set up your API keys.".red());
+        exit(1);
+    }
     let aegis = Aegis::new(config);
 
     let provider_type = match provider.as_deref().unwrap_or("anthropic") {
