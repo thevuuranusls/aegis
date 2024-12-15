@@ -13,16 +13,20 @@ async fn main() {
     } else {
         panic!("Either ANTHROPIC_API_KEY or OPENAI_API_KEY must be set in .env file");
     };
-
     let aegis = Aegis::new(config);
     let messages = vec![Message {
-        role: "user".to_string(),
-        content: "What is the capital of Vietnam?".to_string(),
+        role: aegis::models::Role::User,
+        content: aegis::models::Content {
+            parts: vec![aegis::models::ContentPart::Text {
+                text: "What is the capital of Vietnam?".to_string()
+            }]
+        },
+        metadata: None,
     }];
 
     match aegis.send_message(provider_type, messages).await {
         Ok(resp) => {
-            println!("Assistant: {}", resp)
+            println!("Assistant: {}", resp.content)
         }
         Err(e) => {
             println!("Error: {}", e)
