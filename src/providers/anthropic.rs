@@ -246,17 +246,47 @@ impl Provider for AnthropicProvider {
                 chunk
                     .map_err(|e| AegisError::NetworkError(e))
                     .and_then(|bytes| {
-                        // Parse SSE chunk and convert to Message
                         let text = String::from_utf8_lossy(&bytes);
+                        let lines: Vec<&str> = text.lines().collect();
+                        
+                        // Only process content_block_delta events
+                        if lines.len() >= 2 {
+                            let event_line = lines[0];
+                            let data_line = lines[1];
+
+                            if event_line.contains("content_block_delta") {
+                                if let Some(json_str) = data_line.strip_prefix("data:") {
+                                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(json_str.trim()) {
+                                        if let Some(delta) = json.get("delta") {
+                                            if let Some(text_delta) = delta.get("text") {
+                                                if let Some(content) = text_delta.as_str() {
+                                                    if !content.is_empty() {
+                                                        return Ok(Message {
+                                                            role: Role::Assistant,
+                                                            content: Content {
+                                                                parts: vec![ContentPart::Text { text: content.to_string() }],
+                                                            },
+                                                            metadata: None,
+                                                        });
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // Skip other events by returning an empty message that will be filtered out
                         Ok(Message {
                             role: Role::Assistant,
                             content: Content {
-                                parts: vec![ContentPart::Text { text: text.to_string() }],
+                                parts: vec![],
                             },
                             metadata: None,
                         })
                     })
-            });
+            })
+            .filter(|msg| futures::future::ready(matches!(msg, Ok(msg) if !msg.content.parts.is_empty())));
 
         Ok(Box::pin(stream))
     }

@@ -1,6 +1,6 @@
 use aegis::{
     config::AegisConfig,
-    models::{Message, ProviderType},
+    models::{Message, ProviderType, ContentPart},
     Aegis,
 };
 use anyhow::Result;
@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 use dialoguer::{theme::ColorfulTheme, Input, Select};
 use futures::StreamExt;
-use std::{fs, process::exit};
+use std::{fs, io::Write};
 
 #[derive(Parser)]
 #[command(name = "aegis")]
@@ -139,32 +139,78 @@ async fn handle_chat(
     message: Option<String>,
     model: Option<String>,
 ) -> Result<()> {
-    let config = load_config()?;
-    if config.is_empty() {
-        println!("{}", "No configuration found. Please run `aegis config` to set up your API keys.".red());
-        exit(1);
-    }
-    let aegis = Aegis::new(config);
-
-    let provider_type = match provider.as_deref().unwrap_or("anthropic") {
-        "anthropic" => ProviderType::Anthropic,
-        "openai" => ProviderType::OpenAI,
-        _ => {
-            println!("{}", "Invalid provider. Using Anthropic as default.".yellow());
-            exit(3)
-        }
+    let mut config = load_config().unwrap_or_else(|_| AegisConfig::new());
+    
+    // Get provider selection
+    let provider_type = match provider {
+        Some(p) => match p.as_str() {
+            "anthropic" => ProviderType::Anthropic,
+            "openai" => ProviderType::OpenAI,
+            _ => select_provider()?,
+        },
+        None => select_provider()?,
     };
 
-    println!("\n{} {:?}", "Using provider:".blue(), provider_type);
+    // Check and setup API key if needed
+    ensure_provider_key(&mut config, &provider_type)?;
+    
+    let aegis = Aegis::new(config);
+    println!("\n{} {}", "Using provider:".blue(), provider_type);
+    
+    // Handle model selection if provided
     if let Some(model) = &model {
         println!("{} {}", "Model:".blue(), model);
     }
 
-    // Decision point: Use streaming or regular chat
+    // Start chat session
     if needs_streaming(&message) {
         handle_streaming_chat(&aegis, provider_type, message).await?;
     } else {
         handle_regular_chat(&aegis, provider_type, message).await?;
+    }
+
+    Ok(())
+}
+
+fn select_provider() -> Result<ProviderType> {
+    let theme = ColorfulTheme::default();
+    let providers = vec!["Anthropic", "OpenAI"];
+
+    let selection = Select::with_theme(&theme)
+        .with_prompt("Select AI provider")
+        .items(&providers)
+        .default(0)
+        .interact()?;
+
+    Ok(match selection {
+        0 => ProviderType::Anthropic,
+        1 => ProviderType::OpenAI,
+        _ => unreachable!(),
+    })
+}
+
+fn ensure_provider_key(config: &mut AegisConfig, provider_type: &ProviderType) -> Result<()> {
+    let (key_name, has_key) = match provider_type {
+        ProviderType::Anthropic => ("ANTHROPIC_API_KEY", std::env::var("ANTHROPIC_API_KEY").is_ok()),
+        ProviderType::OpenAI => ("OPENAI_API_KEY", std::env::var("OPENAI_API_KEY").is_ok()),
+    };
+
+    if !has_key {
+        println!("\n{}", format!("No API key found for {:?}", provider_type).yellow());
+        let theme = ColorfulTheme::default();
+        let key: String = Input::with_theme(&theme)
+            .with_prompt(format!("Enter {} API key", provider_type))
+            .interact()?;
+
+        update_env_file(key_name, &key)?;
+        
+        // Update config with new key
+        match provider_type {
+            ProviderType::Anthropic => *config = config.clone().with_anthropic(key),
+            ProviderType::OpenAI => *config = config.clone().with_openai(key),
+        }
+        
+        println!("{}", "API key saved successfully!".green());
     }
 
     Ok(())
@@ -189,7 +235,7 @@ async fn handle_streaming_chat(
     provider_type: ProviderType,
     message: Option<String>,
 ) -> Result<()> {
-    let mut stream = if let Some(content) = message {
+    if let Some(content) = message {
         // One-shot streaming mode
         let msg = Message {
             role: aegis::models::Role::User,
@@ -198,48 +244,77 @@ async fn handle_streaming_chat(
             },
             metadata: None
         };
-        aegis.stream_message(provider_type, vec![msg]).await?
+        let mut stream = aegis.stream_message(provider_type, vec![msg]).await?;
+        
+        print!("\n{} ", "Assistant 🤖".green());
+        println!("{}", "──────────────────".dimmed());
+        
+        while let Some(chunk) = stream.next().await {
+            match chunk {
+                Ok(response) => {
+                    if let Some(text) = response.content.parts.iter().find_map(|part| {
+                        if let ContentPart::Text { text } = part {
+                            Some(text)
+                        } else {
+                            None
+                        }
+                    }) {
+                        print!("{}", text);
+                        std::io::stdout().flush().unwrap_or_default();
+                    }
+                }
+                Err(e) => println!("\n{}: {}", "Error".red(), e),
+            }
+        }
+        println!("\n{}", "──────────────────────────────────────────".dimmed());
     } else {
         // Interactive streaming mode
-        println!("{}", "\nStarting interactive chat session (type 'exit' to quit)".yellow());
+        println!("{}", "\n🤖 Starting chat session (type 'exit' to quit)".bold().yellow());
+        println!("{}", "──────────────────────────────────────────".dimmed());
+        
         loop {
-            let input: String = Input::new().with_prompt("You").interact()?;
+            let input: String = Input::new()
+                .with_prompt("You 🗣️ ".blue().to_string())
+                .interact()?;
+                
             if input.trim().to_lowercase() == "exit" {
+                println!("{}", "\nGoodbye! 👋".yellow());
                 break;
             }
 
-            let msg = Message{
+            let msg = Message {
                 role: aegis::models::Role::User,
                 content: aegis::models::Content {
                     parts: vec![aegis::models::ContentPart::Text { text: input }],
                 },
                 metadata: None
             };
+            
             let mut stream = aegis.stream_message(provider_type.clone(), vec![msg]).await?;
 
-            println!("\n{}", "Assistant:".green());
+            print!("\n{} ", "Assistant 🤖".green());
+            println!("{}", "──────────────────".dimmed());
+            
             while let Some(chunk) = stream.next().await {
                 match chunk {
-                    Ok(response) => print!("{}", response.content),
+                    Ok(response) => {
+                        if let Some(text) = response.content.parts.iter().find_map(|part| {
+                            if let ContentPart::Text { text } = part {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        }) {
+                            print!("{}", text);
+                            std::io::stdout().flush().unwrap_or_default();
+                        }
+                    }
                     Err(e) => println!("\n{}: {}", "Error".red(), e),
                 }
             }
-            println!("\n");
-        }
-        return Ok(());
-    };
-
-    // Handle one-shot streaming response
-    println!("\n{}", "Assistant:".green());
-    while let Some(chunk) = stream.next().await {
-        match chunk {
-            Ok(response) => {
-                print!("{}", response.content);
-            }
-            Err(e) => println!("\n{}: {}", "Error".red(), e),
+            println!("\n{}", "──────────────────────────────────────────".dimmed());
         }
     }
-    println!("\n");
 
     Ok(())
 }

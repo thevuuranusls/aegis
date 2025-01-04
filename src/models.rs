@@ -14,6 +14,15 @@ pub enum ProviderType {
     OpenAI,
 }
 
+impl std::fmt::Display for ProviderType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProviderType::Anthropic => write!(f, "Anthropic"),
+            ProviderType::OpenAI => write!(f, "OpenAI"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
